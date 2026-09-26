@@ -1,0 +1,14 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import {build} from 'esbuild';
+import {fileURLToPath} from 'node:url';
+const root=path.dirname(new URL(import.meta.url).pathname.replace(/^\/(\w:)/,'$1'));
+const read=file=>fs.readFileSync(path.join(root,file));
+fs.mkdirSync(path.join(root,'dist/server'),{recursive:true});fs.mkdirSync(path.join(root,'dist/.openai'),{recursive:true});
+const names=['index.html','styles.css','v2.css','portals.css','admin.css','data.js','v2.js','portals.js','admin.js','hero.png'];const types={html:'text/html; charset=utf-8',css:'text/css; charset=utf-8',js:'text/javascript; charset=utf-8',png:'image/png'};
+const assets={};for(const name of names)assets['/'+name]={body:read('dist/'+name).toString('base64'),type:types[name.split('.').pop()]};assets['/']=assets['/index.html'];
+const source=`import {handle,protectedIdentity} from './worker/handler.mjs';
+const assets=${JSON.stringify(assets)};
+export default {async fetch(request,env){const p=new URL(request.url).pathname;if(p.startsWith('/api/'))return handle(request,env);if(p==='/admin'){const u=await protectedIdentity(request,env);if(!u.id)return Response.redirect(new URL('/#login?next=portal%2Foverview',request.url),303);if(u.role!=='admin')return new Response('Access restricted',{status:403});}const a=assets[p==='/admin'?'/':p];if(!a)return new Response('Not found',{status:404});const bytes=Uint8Array.from(atob(a.body),c=>c.charCodeAt(0));return new Response(bytes,{headers:{'Content-Type':a.type,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Content-Security-Policy':"frame-ancestors 'self' https://chatgpt.com https://*.chatgpt.com; object-src 'none'; base-uri 'self'; form-action 'self'"}})}};`;
+await build({absWorkingDir:root,tsconfigRaw:{},stdin:{contents:source,resolveDir:root,sourcefile:'worker-entry.mjs'},bundle:true,format:'esm',platform:'browser',target:'es2022',outfile:path.join(root,'dist/server/index.js'),minify:false,plugins:[{name:'local-source-reader',setup(b){b.onResolve({filter:/.*/},args=>({path:args.path.startsWith('.')?path.resolve(args.resolveDir,args.path):fileURLToPath(import.meta.resolve(args.path)),namespace:'source'}));b.onLoad({filter:/.*/,namespace:'source'},args=>({contents:fs.readFileSync(args.path,'utf8'),loader:'js',resolveDir:path.dirname(args.path)}));}}]});
+fs.copyFileSync(path.join(root,'.openai/hosting.json'),path.join(root,'dist/.openai/hosting.json'));console.log('Built self-contained Worker with '+names.length+' website assets.');
